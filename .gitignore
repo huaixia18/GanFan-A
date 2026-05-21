@@ -1,0 +1,15 @@
+# 本地运行时生成的数据(每个人自己跑会生成,不入库)
+.cache/
+state.json
+universe.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE / 系统
+.idea/
+.claude/
+.vscode/
+.DS_Store

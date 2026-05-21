@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>选股 Agent · 顺势而为</title>
+<style>
+  :root{--bg:#0f1115;--card:#1a1d24;--line:#2a2e38;--txt:#e6e8ec;--mut:#8b909a;
+        --up:#ff5252;--down:#26a65b;--gold:#ffb300;--blue:#4a9eff;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:20px;margin:0 0 4px} .sub{color:var(--mut);margin:0 0 18px}
+  .bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .stat{flex:1;min-width:150px}
+  .stat .k{color:var(--mut);font-size:12px} .stat .v{font-size:20px;font-weight:600;margin-top:2px}
+  .light{display:inline-flex;align-items:center;gap:8px;font-weight:600}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .active .dot{background:var(--down);box-shadow:0 0 8px var(--down)}
+  .resting .dot{background:var(--gold);box-shadow:0 0 8px var(--gold)}
+  .badge{display:inline-block;padding:1px 7px;border-radius:5px;font-size:12px;font-weight:600}
+  .b-long1{background:#5a3d00;color:var(--gold)} .b-long2{background:#3d3000;color:#d9a900}
+  .b-long3{background:#2e2600;color:#b89000}
+  .b-real{background:#0d3320;color:var(--down)}
+  table{width:100%;border-collapse:collapse;margin-top:6px}
+  th,td{padding:9px 8px;text-align:right;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:500;font-size:12px;text-align:right}
+  th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}
+  .up{color:var(--up)} .down{color:var(--down)}
+  .score{font-weight:700;font-size:15px}
+  .buy-y{color:var(--down);font-weight:600} .buy-n{color:var(--mut)}
+  .flags span{display:inline-block;background:#3a1f1f;color:#ff8a8a;border-radius:4px;padding:1px 6px;font-size:11px;margin:1px}
+  .bars{display:flex;height:7px;border-radius:4px;overflow:hidden;width:120px;background:#0a0c10}
+  .s-t{background:var(--blue)} .s-v{background:#7c5cff} .s-s{background:#26a65b} .s-l{background:var(--gold)}
+  form.inline{display:inline} input,button{font:inherit}
+  input[type=text],input[type=number]{background:#0d0f14;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px 9px}
+  button{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:7px 13px;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--mut)}
+  .tools{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}
+  .tool{flex:1;min-width:260px}
+  .note{color:var(--mut);font-size:12px;margin-top:6px}
+  details summary{cursor:pointer;color:var(--blue)}
+  .alert{background:#3a1f1f;border:1px solid #5a2a2a;color:#ff8a8a;padding:10px 14px;border-radius:8px;margin-bottom:14px}
+  .ok{background:#0d3320;border-color:#1d5a3a;color:#7be0a0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>选股 Agent · 顺势而为,只做认知内的钱</h1>
+  <p class="sub">基本面筛选 → 板块龙头识别 → 趋势/量能/承接评分 → 排序 · 数据源:
+    <span class="badge b-real">实时行情 · {{ '腾讯' if r.mode == 'tencent' else '东财' }}</span>
+  </p>
+
+  {% if r.risk_status == 'RESTING' %}
+  <div class="alert">⚠ 强制休息中 —— 单日回撤 {{ r.last_drawdown }}% 已触发风控,剩余 {{ r.resting_days_left }} 天「只看不买」。
+    重点观察自选票如何走,反思选股与操作。
+    <form class="inline" method="post" action="/reset-rest"><button class="ghost" style="margin-left:8px">手动解除</button></form>
+  </div>
+  {% endif %}
+
+  {% if sell_result %}
+  <div class="alert {{ 'ok' if not sell_result.triggered else '' }}">
+    分时卖出自测({{ sell_result.prices }}):{{ sell_result.msg }}
+  </div>
+  {% endif %}
+
+  <!-- 状态条 -->
+  <div class="bar">
+    <div class="card stat">
+      <div class="k">风控状态</div>
+      <div class="v light {{ 'active' if r.risk_status=='ACTIVE' else 'resting' }}">
+        <span class="dot"></span>{{ '可交易' if r.risk_status=='ACTIVE' else '休息中' }}
+      </div>
+    </div>
+    <div class="card stat"><div class="k">全市场</div><div class="v">{{ r.universe_count }}</div></div>
+    <div class="card stat"><div class="k">已剔除</div><div class="v">{{ r.dropped_count }}</div></div>
+    <div class="card stat"><div class="k">入选</div><div class="v">{{ r.ranked|length }}</div></div>
+    <div class="card stat"><div class="k">最近回撤</div>
+      <div class="v {{ 'down' if (r.last_drawdown or 0) < 0 else '' }}">{{ r.last_drawdown if r.last_drawdown is not none else '—' }}{{ '%' if r.last_drawdown is not none else '' }}</div></div>
+  </div>
+
+  <!-- 工具区 -->
+  <div class="tools">
+    <div class="card tool">
+      <div class="k" style="color:var(--mut);font-size:12px">登记当日回撤(达 {{ cfg.risk_control.max_daily_drawdown }}% 强制休息 {{ cfg.risk_control.rest_days }} 天)</div>
+      <form method="post" action="/drawdown" style="margin-top:8px">
+        <input type="number" step="0.1" name="drawdown" placeholder="如 -4.8" required>
+        <button>登记</button>
+      </form>
+    </div>
+    <div class="card tool">
+      <div class="k" style="color:var(--mut);font-size:12px">自选池(只交易池内股票;为空则全市场)</div>
+      <form method="post" action="/watchlist" style="margin-top:8px">
+        <input type="text" name="code" placeholder="6位代码">
+        <button name="action" value="add">加入</button>
+        <button class="ghost" name="action" value="remove">移除</button>
+      </form>
+    </div>
+    <div class="card tool">
+      <div class="k" style="color:var(--mut);font-size:12px">分时卖出自测(粘贴分时价,空格/逗号分隔)</div>
+      <form method="post" action="/sell-check" style="margin-top:8px">
+        <input type="text" name="prices" placeholder="10.0 10.3 10.1 10.05" style="width:60%">
+        <button>检测</button>
+      </form>
+    </div>
+    <div class="card tool" style="min-width:380px">
+      <div class="k" style="color:var(--mut);font-size:12px">录入持仓(同代码再录会按加权成本合并)</div>
+      <form method="post" action="/position" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <input type="text" name="code" placeholder="代码" style="width:80px" required>
+        <input type="number" step="0.01" name="cost" placeholder="成本价" style="width:80px" required>
+        <input type="number" step="100" name="shares" placeholder="股数" style="width:80px" required>
+        <input type="date" name="buy_date" style="width:140px">
+        <button name="action" value="add">录入</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 盘中监控 -->
+  <div class="card" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <b>盘中监控</b>
+      <span class="note">自选池实时分时,自动跑卖出规则(急拉急跌1分钟 / 缓拉急跌2次失败)</span>
+      <label class="note" style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="mon-toggle"> 开启轮询
+      </label>
+      <select id="mon-interval" style="background:#0d0f14;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:5px 8px">
+        <option value="10">10秒</option>
+        <option value="30" selected>30秒</option>
+        <option value="60">60秒</option>
+      </select>
+      <span class="note" id="mon-status">未开启</span>
+    </div>
+    <div id="mon-body"><span class="note">勾选「开启轮询」后,每隔所选间隔刷新自选池分时并检测卖出信号。仅交易时段有分时数据。</span></div>
+  </div>
+
+  <!-- 持仓监控 -->
+  <div class="card" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+      <b>持仓监控</b>
+      <span class="note">浮盈亏 · 当日损益 · 分时卖出 · 趋势止损 · 顺势加仓(下跌不补仓)</span>
+      <span id="pos-account" class="note" style="margin-left:auto"></span>
+      <label class="note" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="pos-toggle"> 开启监控
+      </label>
+      <span class="note" id="pos-status">未开启</span>
+    </div>
+    <div id="pos-body">
+      {% if positions %}
+        <table><thead><tr><th style="text-align:left">代码</th><th>成本</th><th>股数</th><th>买入日</th><th class="note" colspan="5" style="text-align:left">　开启监控后显示实时浮盈亏与提示</th></tr></thead><tbody>
+        {% for p in positions %}
+          <tr><td style="text-align:left"><b>{{ p.code }}</b></td><td>{{ p.cost }}</td><td>{{ p.shares }}</td><td class="note">{{ p.buy_date }}</td>
+            <td colspan="5" style="text-align:right"><form method="post" action="/position" class="inline"><input type="hidden" name="code" value="{{ p.code }}"><button class="ghost" name="action" value="remove" style="padding:3px 8px">清仓移除</button></form></td></tr>
+        {% endfor %}
+        </tbody></table>
+      {% else %}
+        <span class="note">暂无持仓。在上方「录入持仓」填入代码/成本价/股数即可。</span>
+      {% endif %}
+    </div>
+    <!-- 账户净值复盘曲线 -->
+    <div id="equity-wrap" style="margin-top:14px;display:none">
+      <div class="note" style="margin-bottom:4px">账户净值曲线(每日收盘快照,用于复盘)<span id="equity-meta"></span></div>
+      <div id="equity-chart"></div>
+    </div>
+  </div>
+
+  <!-- 选股表 -->
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>#</th><th>代码/名称</th><th>板块·龙头</th>
+        <th>价</th><th>涨跌</th><th>量比</th><th>换手</th><th>市值(亿)</th>
+        <th>趋势</th><th>评分构成</th><th>综合分</th><th>买入</th><th>提示</th>
+      </tr></thead>
+      <tbody>
+      {% for s in r.ranked %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td><b>{{ s.name }}</b><br><span class="note">{{ s.code }}</span></td>
+          <td>{{ s.sector }}
+            {% if s.leader_label %}<span class="badge b-long{{ s.leader_label|length and (1 if s.leader_label=='龙一' else (2 if s.leader_label=='龙二' else 3)) }}">{{ s.leader_label }}</span>{% endif %}
+          </td>
+          <td>{{ '%.2f'|format(s.detail.price) }}</td>
+          <td class="{{ 'up' if s.detail.pct_chg>=0 else 'down' }}">{{ '%+.2f'|format(s.detail.pct_chg) }}%</td>
+          <td>{{ '%.2f'|format(s.detail.vol_ratio) }}</td>
+          <td>{{ '%.1f'|format(s.detail.turnover) }}%</td>
+          <td>{{ '%.0f'|format(s.detail.mkt_cap) }}</td>
+          <td>{{ '↑上升' if s.uptrend else '—' }}</td>
+          <td>
+            <div class="bars" title="趋势{{s.trend_score}} 量能{{s.volume_score}} 承接{{s.support_score}} 龙头{{s.leader_score}} 扣{{s.penalty}}">
+              <div class="s-t" style="width:{{ s.trend_score }}px"></div>
+              <div class="s-v" style="width:{{ s.volume_score }}px"></div>
+              <div class="s-s" style="width:{{ s.support_score }}px"></div>
+              <div class="s-l" style="width:{{ s.leader_score }}px"></div>
+            </div>
+            <span class="note">趋{{s.trend_score}}·量{{s.volume_score}}·承{{s.support_score}}·龙{{s.leader_score}}{% if s.penalty %}·罚{{s.penalty}}{% endif %}</span>
+          </td>
+          <td class="score">{{ s.score }}</td>
+          <td class="{{ 'buy-y' if s.can_buy else 'buy-n' }}">
+            {{ '✓买入' if s.can_buy else ('休息中' if s.buy_blocked_by_rest else '观望') }}
+          </td>
+          <td class="flags" style="text-align:left">
+            {% for f in s.flags %}<span>{{ f }}</span>{% endfor %}
+            <details><summary>理由</summary><span class="note">{{ s.buy_reasons|join('；') }}</span></details>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="13" style="text-align:center;color:var(--mut);padding:30px">无满足筛选条件的股票</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="note">评分构成:趋势(蓝)·量能(紫)·承接(绿)·龙头(金),涨停等异动会扣分。买入需顺势+有量承接+评分达标,休息期一律屏蔽。</p>
+</div>
+
+<script>
+(function(){
+  const toggle = document.getElementById('mon-toggle');
+  const intervalSel = document.getElementById('mon-interval');
+  const statusEl = document.getElementById('mon-status');
+  const bodyEl = document.getElementById('mon-body');
+  let timer = null;
+
+  function render(data){
+    if(!data.items || !data.items.length){
+      bodyEl.innerHTML = '<span class="note">自选池为空,先在上方「自选池」加入要监控的代码。</span>';
+      return;
+    }
+    let html = '<table><thead><tr><th style="text-align:left">代码</th><th>最新价</th><th>较开盘</th><th>分钟点</th><th style="text-align:left">卖出信号</th></tr></thead><tbody>';
+    for(const it of data.items){
+      if(!it.ok){
+        html += `<tr><td style="text-align:left">${it.code}</td><td colspan="4" class="note" style="text-align:left">${it.msg}</td></tr>`;
+        continue;
+      }
+      const pcls = it.pct_from_open>=0?'up':'down';
+      const sell = it.triggered
+        ? `<span style="color:#ff8a8a;font-weight:700">⚠ ${it.msg}</span>`
+        : `<span class="down">${it.msg}</span>`;
+      html += `<tr ${it.triggered?'style="background:#3a1f1f"':''}>
+        <td style="text-align:left"><b>${it.code}</b></td>
+        <td>${it.last}</td>
+        <td class="${pcls}">${it.pct_from_open>=0?'+':''}${it.pct_from_open}%</td>
+        <td>${it.points}</td>
+        <td style="text-align:left">${sell}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    bodyEl.innerHTML = html;
+  }
+
+  async function poll(){
+    statusEl.textContent = '刷新中...';
+    try{
+      const resp = await fetch('/api/intraday');
+      const data = await resp.json();
+      render(data);
+      const anyTrig = (data.items||[]).some(x=>x.triggered);
+      statusEl.textContent = `${data.time} · ${data.mode} · ${data.watchlist_size}只` + (anyTrig?' · ⚠有卖出信号':'');
+      statusEl.style.color = anyTrig ? '#ff8a8a' : '';
+      if(anyTrig && window.Notification && Notification.permission==='granted'){
+        new Notification('选股Agent · 触发卖出信号', {body: data.items.filter(x=>x.triggered).map(x=>x.code).join(', ')});
+      }
+    }catch(e){ statusEl.textContent = '请求失败: '+e; }
+  }
+
+  function start(){
+    if(window.Notification && Notification.permission==='default') Notification.requestPermission();
+    poll();
+    timer = setInterval(poll, parseInt(intervalSel.value,10)*1000);
+    statusEl.textContent = '已开启';
+  }
+  function stop(){ if(timer){clearInterval(timer);timer=null;} statusEl.textContent='已停止'; }
+
+  toggle.addEventListener('change', ()=> toggle.checked ? start() : stop());
+  intervalSel.addEventListener('change', ()=>{ if(toggle.checked){stop();start();} });
+})();
+
+// ===== 持仓监控 =====
+(function(){
+  const toggle = document.getElementById('pos-toggle');
+  const statusEl = document.getElementById('pos-status');
+  const acctEl = document.getElementById('pos-account');
+  const bodyEl = document.getElementById('pos-body');
+  let timer = null;
+
+  const LEVEL = {
+    ok:  {bg:'',          label:'持有'},
+    add: {bg:'#0d3320',   label:'可加仓'},
+    warn:{bg:'#3a1f1f',   label:'⚠'},
+  };
+
+  function render(data){
+    if(data.empty || !data.items || !data.items.length){
+      acctEl.textContent = '';
+      bodyEl.innerHTML = '<span class="note">暂无持仓。在上方「录入持仓」填入代码/成本价/股数即可。</span>';
+      return;
+    }
+    const a = data.account;
+    const pnlcls = a.total_pnl>=0?'up':'down';
+    const daycls = a.total_day_pct>=0?'up':'down';
+    acctEl.innerHTML = `市值 ${a.total_value.toLocaleString()} · `
+      + `浮盈亏 <span class="${pnlcls}">${a.total_pnl>=0?'+':''}${a.total_pnl.toLocaleString()}(${a.total_pnl_pct>=0?'+':''}${a.total_pnl_pct}%)</span> · `
+      + `当日 <span class="${daycls}">${a.total_day_pct>=0?'+':''}${a.total_day_pct}%</span>`
+      + (a.drawdown_alert?` · <span style="color:#ff8a8a;font-weight:700">⚠总回撤达阈值,已强制休息</span>`:'');
+
+    let html = '<table><thead><tr><th style="text-align:left">代码/名称</th><th>成本</th><th>现价</th><th>浮盈亏</th><th>当日</th><th>市值</th><th>趋势</th><th style="text-align:left">提示</th><th></th></tr></thead><tbody>';
+    for(const it of data.items){
+      const lv = LEVEL[it.level] || LEVEL.ok;
+      const pcls = it.pnl_pct>=0?'up':'down';
+      const dcls = it.day_pct>=0?'up':'down';
+      const alerts = (it.alerts||[]).map(x=>{
+        if(x.startsWith('卖出')||x.indexOf('止损')>=0) return `<div style="color:#ff8a8a;font-weight:600">⚠ ${x}</div>`;
+        if(x.indexOf('加仓')>=0) return `<div style="color:#7be0a0">↑ ${x}</div>`;
+        if(x.indexOf('不补仓')>=0) return `<div style="color:#ffb300">◆ ${x}</div>`;
+        return `<div class="note">${x}</div>`;
+      }).join('') || '<span class="note">—</span>';
+      html += `<tr style="background:${lv.bg}">
+        <td style="text-align:left"><b>${it.name}</b><br><span class="note">${it.code} · ${lv.label}</span></td>
+        <td>${it.cost}</td><td>${it.price}</td>
+        <td class="${pcls}">${it.pnl_pct>=0?'+':''}${it.pnl_pct}%</td>
+        <td class="${dcls}">${it.day_pct>=0?'+':''}${it.day_pct}%</td>
+        <td>${it.market_value.toLocaleString()}</td>
+        <td>${it.uptrend?'↑上升':'—'}</td>
+        <td style="text-align:left">${alerts}</td>
+        <td><form method="post" action="/position" class="inline"><input type="hidden" name="code" value="${it.code}"><button class="ghost" name="action" value="remove" style="padding:3px 8px">移除</button></form></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    bodyEl.innerHTML = html;
+  }
+
+  async function poll(){
+    statusEl.textContent = '刷新中...';
+    try{
+      const resp = await fetch('/api/positions');
+      const data = await resp.json();
+      render(data);
+      const warns = (data.items||[]).filter(x=>x.level==='warn');
+      statusEl.textContent = `${data.time}` + (warns.length?` · ⚠${warns.length}只需处理`:' · 正常');
+      statusEl.style.color = warns.length ? '#ff8a8a' : '';
+      if(warns.length && window.Notification && Notification.permission==='granted'){
+        new Notification('选股Agent · 持仓需处理', {body: warns.map(x=>x.name+':'+(x.alerts[0]||'')).join('\n')});
+      }
+      drawEquity();
+    }catch(e){ statusEl.textContent = '请求失败: '+e; }
+  }
+
+  async function drawEquity(){
+    let hist;
+    try{ hist = (await (await fetch('/api/equity')).json()).history || []; }
+    catch(e){ return; }
+    const wrap = document.getElementById('equity-wrap');
+    const chart = document.getElementById('equity-chart');
+    const meta = document.getElementById('equity-meta');
+    if(hist.length < 2){
+      wrap.style.display = hist.length ? 'block' : 'none';
+      if(hist.length===1) chart.innerHTML = '<span class="note">仅 1 个交易日快照,明日起可绘制曲线。</span>';
+      return;
+    }
+    wrap.style.display = 'block';
+
+    const W=900, H=160, pad=34;
+    const vals = hist.map(h=>h.value);
+    const min=Math.min(...vals), max=Math.max(...vals);
+    const span = (max-min)||1;
+    const x = i => pad + i*(W-2*pad)/(hist.length-1);
+    const y = v => H-pad - (v-min)/span*(H-2*pad);
+    const pts = hist.map((h,i)=>`${x(i).toFixed(1)},${y(h.value).toFixed(1)}`);
+    const line = pts.join(' ');
+    const area = `${pad},${H-pad} ${line} ${(W-pad)},${H-pad}`;
+    const up = hist[hist.length-1].value >= hist[0].value;
+    const col = up ? '#26a65b' : '#ff5252';
+    // x 轴标签:首/中/尾日期
+    const labels = [0, Math.floor((hist.length-1)/2), hist.length-1].map(i=>
+      `<text x="${x(i)}" y="${H-8}" fill="#8b909a" font-size="10" text-anchor="middle">${hist[i].date.slice(5)}</text>`).join('');
+    const dots = hist.map((h,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(h.value).toFixed(1)}" r="2.5" fill="${col}"><title>${h.date} 净值${h.value} 浮盈亏${h.pnl_pct>=0?'+':''}${h.pnl_pct}% 当日${h.day_pct>=0?'+':''}${h.day_pct}%</title></circle>`).join('');
+    chart.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="background:#0a0c10;border:1px solid var(--line);border-radius:8px">
+      <polygon points="${area}" fill="${col}" opacity="0.10"/>
+      <polyline points="${line}" fill="none" stroke="${col}" stroke-width="2"/>
+      <text x="${pad}" y="${y(max)-4}" fill="#8b909a" font-size="10">${max.toLocaleString()}</text>
+      <text x="${pad}" y="${y(min)+12}" fill="#8b909a" font-size="10">${min.toLocaleString()}</text>
+      ${dots}${labels}
+    </svg>`;
+    const first=hist[0], last=hist[hist.length-1];
+    const chg = ((last.value-first.value)/first.value*100);
+    meta.innerHTML = ` · ${hist.length}个交易日 · 区间 <span class="${chg>=0?'up':'down'}">${chg>=0?'+':''}${chg.toFixed(1)}%</span>`;
+  }
+
+  function start(){
+    if(window.Notification && Notification.permission==='default') Notification.requestPermission();
+    poll();
+    timer = setInterval(poll, 30000);  // 持仓 30 秒轮询
+    statusEl.textContent = '已开启';
+  }
+  function stop(){ if(timer){clearInterval(timer);timer=null;} statusEl.textContent='已停止'; }
+
+  toggle.addEventListener('change', ()=> toggle.checked ? start() : stop());
+})();
+</script>
+</body>
+</html>

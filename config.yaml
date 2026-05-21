@@ -1,0 +1,53 @@
+# 选股 Agent 配置 —— 所有阈值集中在此,便于动态微调
+
+# 一、基本面硬性筛选(不满足直接剔除)
+fundamental:
+  exclude_loss: true        # 排除亏损票(净利润为负)
+  market_cap_max: 100       # 市值上限,单位:亿
+  price_min: 5.0            # 股价下限,元
+  price_max: 30.0           # 股价上限,元
+  exclude_st: true          # 排除 ST/*ST
+  exclude_new_days: 60      # 排除上市不足 N 天的次新(无趋势可言)
+
+# 二、自选池:只交易池里的股票。为空表示对全市场筛选结果开放
+watchlist: []
+# 示例:
+# watchlist: ["600519", "000858", "300750"]
+
+# 三、评分权重(总分 100),顺势核心 → 趋势+量能+承接占大头
+score_weights:
+  trend: 35        # 上升趋势强度(均线多头/价格在均线上方/斜率)
+  volume: 25       # 量能(温和放量为佳,缩量回踩亦可)
+  bid_support: 25  # 承接力度(委买/内外盘/回踩不破)
+  leader: 15       # 龙头地位加分(龙一>龙二>龙三)
+
+# 四、风险扣分
+risk_penalty:
+  limit_up_today: -20      # 今日涨停:警惕加速赶顶,重罚
+  near_limit_up: -8        # 接近涨停(涨幅>9%)
+  big_drop_today: -15      # 今日大跌(跌幅>5%)趋势可能改变
+  high_volatility: -5      # 振幅过大(>12%)不稳
+
+# 五、买入信号阈值
+buy_signal:
+  min_score: 60            # 综合分低于此不提示买入
+  require_uptrend: true    # 必须明确上升趋势
+  reject_breakout: true    # 不做突破(避免假突破)
+  reject_rebound: true     # 不做反包(避免抄底)
+  min_volume_ratio: 1.0    # 量比下限,确认有量能承接
+
+# 六、风控状态机
+risk_control:
+  max_daily_drawdown: -4.5   # 单日回撤达此值(%),强制休息
+  rest_days: 2               # 强制休息天数
+
+# 七、运行参数
+runtime:
+  top_n: 20                  # 输出排名前 N
+  hist_days: 60              # 拉取多少天日线算趋势
+  # 选股范围:
+  #   full_market = true  每日动态拉全市场(交易所代码表+腾讯行情),池子天天变
+  #   full_market = false 只用 universe.txt 候选池
+  full_market: true
+  prefilter_top: 200         # 全市场模式:基本面筛后按活跃度粗筛到 N 只再算趋势(控速)
+  prefer_source: tencent     # 首选真实源:tencent / eastmoney(网络通时可改东财)
