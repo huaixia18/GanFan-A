@@ -165,6 +165,12 @@ def score_universe(df: pd.DataFrame, source: ds.DataSource, cfg: dict) -> pd.Dat
                 "ma_bull": tm.ma_bull,
                 "above_ma20": tm.above_ma20,
                 "slope_pct": tm.slope_pct,
+                # 4 个归一化原始值(与权重无关),供进化引擎用任意权重瞬间重算分数
+                "raw_trend": round(float(tm.raw), 4),
+                "raw_volume": round(float(vol_raw), 4),
+                "raw_support": round(float(sup_raw), 4),
+                "raw_leader": round(float(leader_raw), 4),
+                "raw_penalty": round(float(penalty), 4),
             },
         ))
 

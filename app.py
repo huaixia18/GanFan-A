@@ -155,6 +155,30 @@ def api_positions():
     })
 
 
+@app.route("/api/evolve/status")
+def api_evolve_status():
+    """进化看板:当前权重版本 / 样本数 / IC / 历次调整。"""
+    from stockagent import evolve
+    st = evolve.status()
+    cfg = load_config()
+    st["config_weights"] = cfg["score_weights"]
+    st["active_weights"] = evolve.active_weights(cfg["score_weights"])
+    return jsonify(st)
+
+
+@app.route("/api/evolve/run", methods=["POST"])
+def api_evolve_run():
+    """手动触发一次复盘进化:回收收益 → 评估 → 进化/回滚。"""
+    from stockagent import evolve
+    cfg = load_config()
+    source = ds.DataSource(prefer=cfg["runtime"].get("prefer_source", "tencent"))
+    source.spot()  # 锁定真实源
+    verified = evolve.verify_returns(source)
+    report = evolve.evolve(cfg["score_weights"])
+    report["newly_verified"] = verified
+    return jsonify(report)
+
+
 @app.route("/api/equity")
 def api_equity():
     """账户每日净值快照历史(复盘曲线)。"""

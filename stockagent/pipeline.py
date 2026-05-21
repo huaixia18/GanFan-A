@@ -29,6 +29,7 @@ class PipelineResult:
     ranked: list[dict] = field(default_factory=list)   # 排序后的选股
     dropped_count: int = 0
     universe_count: int = 0
+    weights_version: str = "config"
 
 
 def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResult:
@@ -77,6 +78,13 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
         sector_map = leaders.build_sector_map(passed[ds.COL_CODE].astype(str).tolist())
     annotated = leaders.annotate_leaders(passed, sector_map)
 
+    # 进化:用当前激活的权重版本覆盖 config 死值(无历史则用 config)
+    from . import evolve
+    active_w = evolve.active_weights(cfg["score_weights"])
+    weights_version = evolve.status()["active"]
+    weights_version = weights_version["id"] if weights_version else "config"
+    cfg = {**cfg, "score_weights": {**cfg["score_weights"], **active_w}}
+
     ranked_df = score_universe(annotated, source, cfg)
     top_n = rt["top_n"]
     ranked_df = ranked_df.head(top_n) if not ranked_df.empty else ranked_df
@@ -97,6 +105,13 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
                 "buy_blocked_by_rest": verdict.can_buy and not can_trade,
             })
 
+    # 记录本次高分股快照,供后续 N 日收益验证与进化(仅真实源)
+    if ranked and source.is_real:
+        try:
+            evolve.record_predictions(ranked, weights_version)
+        except Exception:  # noqa: BLE001
+            pass
+
     return PipelineResult(
         mode=source.mode,
         risk_status=state.status(),
@@ -105,4 +120,5 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
         ranked=ranked,
         dropped_count=len(dropped),
         universe_count=universe_count,
+        weights_version=weights_version,
     )

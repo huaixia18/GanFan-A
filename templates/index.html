@@ -164,6 +164,17 @@
     </div>
   </div>
 
+  <!-- 自主进化面板 -->
+  <div class="card" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+      <b>自主进化</b>
+      <span class="note">只自调评分权重 · 纪律红线锁死 · 样本不足不动手 · 变差自动回滚</span>
+      <span class="note" id="evo-meta" style="margin-left:auto"></span>
+      <button class="ghost" id="evo-run" style="padding:4px 10px">立即复盘</button>
+    </div>
+    <div id="evo-body"><span class="note">加载中...</span></div>
+  </div>
+
   <!-- 选股表 -->
   <div class="card">
     <table>
@@ -394,6 +405,58 @@
   function stop(){ if(timer){clearInterval(timer);timer=null;} statusEl.textContent='已停止'; }
 
   toggle.addEventListener('change', ()=> toggle.checked ? start() : stop());
+})();
+
+// ===== 自主进化面板 =====
+(function(){
+  const body = document.getElementById('evo-body');
+  const meta = document.getElementById('evo-meta');
+  const runBtn = document.getElementById('evo-run');
+  const WK = {trend:'趋势', volume:'量能', bid_support:'承接', leader:'龙头'};
+
+  function wbar(w){
+    return Object.keys(WK).map(k=>`<span style="margin-right:10px">${WK[k]} <b>${(w[k]||0).toFixed?w[k].toFixed(1):w[k]}</b></span>`).join('');
+  }
+
+  async function load(){
+    let s;
+    try{ s = await (await fetch('/api/evolve/status')).json(); }
+    catch(e){ body.innerHTML='<span class="note">加载失败</span>'; return; }
+    const aw = s.active_weights || s.config_weights;
+    const ver = s.active ? s.active.id : 'config(初始)';
+    const m = s.active && s.active.metrics ? s.active.metrics : null;
+    meta.textContent = `样本 ${s.verified_samples}/${s.min_samples} · 版本 ${ver}`;
+
+    let html = `<div style="margin-bottom:8px">当前生效权重(${ver}):${wbar(aw)}</div>`;
+    if(m){
+      html += `<div class="note" style="margin-bottom:8px">预测力 IC=<b class="${m.ic>=0?'up':'down'}">${m.ic}</b> · 高分组比低分组多赚 <b>${m.spread}%</b> · 样本 ${m.n}</div>`;
+    }
+    if(s.verified_samples < s.min_samples){
+      html += `<div class="note">⏳ 已验证样本 ${s.verified_samples} 条,满 ${s.min_samples} 条才会开始调参(避免小样本过拟合)。每次选股自动记录,N 日后回收收益。</div>`;
+    }
+    if(s.versions && s.versions.length){
+      html += '<div class="note" style="margin-top:8px">版本历史:</div><table style="margin-top:4px"><thead><tr><th>版本</th><th>日期</th><th>IC</th><th>收益差</th><th>样本</th><th style="text-align:left">权重</th></tr></thead><tbody>';
+      for(const v of s.versions.slice().reverse()){
+        const act = v.id===ver?' style="background:#0d3320"':'';
+        html += `<tr${act}><td>${v.id}${v.id===ver?' ★':''}</td><td>${v.date}</td><td>${v.metrics.ic}</td><td>${v.metrics.spread}%</td><td>${v.metrics.n}</td><td style="text-align:left" class="note">${wbar(v.weights)}</td></tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    body.innerHTML = html;
+  }
+
+  runBtn.addEventListener('click', async ()=>{
+    runBtn.disabled=true; runBtn.textContent='复盘中...';
+    try{
+      const r = await (await fetch('/api/evolve/run',{method:'POST'})).json();
+      const ACT={hold:'保持不变',evolve:'已进化',rollback:'已回滚'};
+      alert(`复盘完成 · 新验证 ${r.newly_verified||0} 条\n动作:${ACT[r.action]||r.action}\n${r.note||''}`);
+      load();
+    }catch(e){ alert('复盘失败: '+e); }
+    runBtn.disabled=false; runBtn.textContent='立即复盘';
+  });
+
+  load();
 })();
 </script>
 </body>

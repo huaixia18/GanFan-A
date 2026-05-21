@@ -2,6 +2,8 @@
 .cache/
 state.json
 universe.txt
+predictions.json
+evolution.json
 
 # Python
 __pycache__/
