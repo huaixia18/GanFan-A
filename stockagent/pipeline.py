@@ -73,15 +73,31 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
         passed = passed.assign(_act=activity).sort_values(
             "_act", ascending=False).head(prefilter_top).drop(columns="_act").reset_index(drop=True)
 
-    # 板块归属:全市场/腾讯用行业映射;东财源尝试在线板块接口
+    # 板块归属:优先用东财细分行业(与连板天梯同口径,需代理可达),
+    # 失败则降级到交易所粗行业 / universe 注释。
     sector_map = None
-    if full_market and source.is_real:
-        sector_map = source.industry_map
-    elif source.mode == "tencent":
-        sector_map = sector_map_file
-    elif source.mode == "eastmoney":
-        sector_map = leaders.build_sector_map(passed[ds.COL_CODE].astype(str).tolist())
+    if source.is_real:
+        try:
+            sector_map = ds.industry_map_em()    # 代理可达时返回全市场细分行业
+        except Exception:  # noqa: BLE001
+            sector_map = None
+    if not sector_map:
+        if full_market and source.is_real:
+            sector_map = source.industry_map
+        elif source.mode == "tencent":
+            sector_map = sector_map_file
+        elif source.mode == "eastmoney":
+            sector_map = leaders.build_sector_map(passed[ds.COL_CODE].astype(str).tolist())
     annotated = leaders.annotate_leaders(passed, sector_map)
+
+    # 连板天梯:用今日涨停池算活跃板块,给选股池里属于热门板块的股票打热度
+    hot = None
+    if source.is_real:
+        try:
+            hot = ds.hot_sectors(top=rt.get("hot_sectors_top", 12))
+        except Exception:  # noqa: BLE001
+            hot = None
+    annotated = leaders.annotate_hot(annotated, hot)
 
     # 进化:用当前激活的权重版本覆盖 config 死值(无历史则用 config)
     from . import evolve

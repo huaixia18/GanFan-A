@@ -45,6 +45,39 @@ def annotate_leaders(df: pd.DataFrame, sector_map: dict | None = None) -> pd.Dat
     return out.drop(columns=["_sector", "_activity"])
 
 
+def annotate_hot(df: pd.DataFrame, hot: "pd.DataFrame | None") -> pd.DataFrame:
+    """根据今日连板天梯标注热门板块:给选股池里属于活跃板块的股票打热度。
+
+    hot 为 datasource.hot_sectors() 的结果(行业/最高连板/涨停家数)。
+    新增列:
+      sector_hot   该股所属板块今日是否活跃(在涨停天梯里有票)
+      sector_rank_heat  板块热度排名(1=最热),非热门为 0
+      hot_score    0~1 板块热度(连板高度为主,家数为辅),供评分加权
+    """
+    out = df.copy()
+    out["sector_hot"] = False
+    out["sector_rank_heat"] = 0
+    out["hot_score"] = 0.0
+    if hot is None or hot.empty or "sector" not in out.columns:
+        return out
+
+    # 板块热度:连板高度归一(7板封顶)为主 + 家数归一为辅
+    max_lb = max(hot["max_lianban"].max(), 1)
+    max_cnt = max(hot["zt_count"].max(), 1)
+    heat = {}
+    for rank, row in enumerate(hot.itertuples(), start=1):
+        h = 0.7 * (row.max_lianban / max_lb) + 0.3 * (row.zt_count / max_cnt)
+        heat[row.sector] = (rank, round(float(h), 3))
+
+    for i, sec in out["sector"].items():
+        if sec in heat:
+            rank, h = heat[sec]
+            out.at[i, "sector_hot"] = True
+            out.at[i, "sector_rank_heat"] = rank
+            out.at[i, "hot_score"] = h
+    return out
+
+
 def build_sector_map(codes: list[str]) -> dict:
     """real 模式下尝试用 akshare 概念/行业成分构造 code->板块。
 

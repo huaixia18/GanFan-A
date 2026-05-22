@@ -131,7 +131,11 @@ def score_universe(df: pd.DataFrame, source: ds.DataSource, cfg: dict) -> pd.Dat
         sup_raw = _support_raw(row)
 
         lr = int(row.get("leader_rank", -1))
-        leader_raw = {0: 1.0, 1: 0.7, 2: 0.45}.get(lr, 0.0)
+        leader_base = {0: 1.0, 1: 0.7, 2: 0.45}.get(lr, 0.0)
+        # 连板天梯加成:属于今日活跃板块的龙头才是真龙头。
+        # 冷门板块龙头打 7 折,热门板块龙头按热度上浮(最高 1.0)。
+        hot_score = float(row.get("hot_score", 0) or 0)
+        leader_raw = leader_base * (0.7 + 0.3 * min(1.0, hot_score * 1.5))
 
         trend_score = tm.raw * w["trend"]
         volume_score = vol_raw * w["volume"]
@@ -171,6 +175,9 @@ def score_universe(df: pd.DataFrame, source: ds.DataSource, cfg: dict) -> pd.Dat
                 "raw_support": round(float(sup_raw), 4),
                 "raw_leader": round(float(leader_raw), 4),
                 "raw_penalty": round(float(penalty), 4),
+                # 连板天梯热度(界面展示用)
+                "sector_hot": bool(row.get("sector_hot", False)),
+                "hot_score": round(float(row.get("hot_score", 0) or 0), 3),
             },
         ))
 

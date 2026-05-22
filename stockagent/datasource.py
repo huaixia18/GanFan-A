@@ -228,6 +228,103 @@ def _tx_minute(code: str) -> list[float]:
     return prices
 
 
+# --------------------------------------------------------------------------- #
+# 连板天梯 / 涨停池(市场情绪 → 活跃板块)
+# 走 akshare 的 push2ex.eastmoney.com,经实测在本机可达(区别于被阻断的 push2)
+# --------------------------------------------------------------------------- #
+_ztpool_cache: tuple[str, pd.DataFrame] | None = None
+
+
+def limit_up_pool(date_str: str | None = None) -> pd.DataFrame:
+    """当日涨停池天梯。返回统一列:code/name/pct/price/lianban/sector/turnover/seal_amount/broken。
+
+    date_str 形如 '20260521';默认取今天。当日文件缓存,避免重复请求。
+    """
+    global _ztpool_cache
+    key = date_str or _today_key()
+    if _ztpool_cache and _ztpool_cache[0] == key:
+        return _ztpool_cache[1]
+
+    cache_file = _CACHE_DIR / f"ztpool_{key}.pkl"
+    if cache_file.exists():
+        df = pd.read_pickle(cache_file)
+        _ztpool_cache = (key, df)
+        return df
+
+    import akshare as ak
+    raw = ak.stock_zt_pool_em(date=key)
+    rename = {
+        "代码": "code", "名称": "name", "涨跌幅": "pct", "最新价": "price",
+        "连板数": "lianban", "所属行业": "sector", "换手率": "turnover",
+        "封板资金": "seal_amount", "炸板次数": "broken",
+    }
+    df = raw.rename(columns=rename)
+    df = df[[c for c in rename.values() if c in df.columns]].copy()
+    df["code"] = df["code"].astype(str).str.zfill(6)
+    df["lianban"] = pd.to_numeric(df["lianban"], errors="coerce").fillna(1).astype(int)
+    for c in ("pct", "price", "turnover", "seal_amount", "broken"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.sort_values("lianban", ascending=False).reset_index(drop=True)
+
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_pickle(cache_file)
+    _ztpool_cache = (key, df)
+    return df
+
+
+def hot_sectors(date_str: str | None = None, top: int = 10) -> pd.DataFrame:
+    """按涨停池聚合出今日活跃板块:行业 → 最高连板 / 涨停家数 / 龙头。
+
+    热度排序:先看最高连板(梯队高度),再看涨停家数(扩散广度)。
+    """
+    pool = limit_up_pool(date_str)
+    if pool.empty:
+        return pool
+    g = pool.groupby("sector").agg(
+        max_lianban=("lianban", "max"),
+        zt_count=("code", "count"),
+    ).reset_index()
+    # 每个行业的龙头(连板最高那只)
+    leaders = pool.sort_values("lianban", ascending=False).groupby("sector").first()
+    g["leader_code"] = g["sector"].map(leaders["code"])
+    g["leader_name"] = g["sector"].map(leaders["name"])
+    g = g.sort_values(["max_lianban", "zt_count"], ascending=False).reset_index(drop=True)
+    return g.head(top)
+
+
+def industry_map_em(date_key: str | None = None) -> dict[str, str]:
+    """全市场 代码→东财细分行业 映射,与连板天梯(涨停池)同口径。
+
+    走 akshare 的东财行业成分接口(push2 域名,直连被阻断)。
+    akshare 默认读环境变量 HTTP_PROXY,所以**用户开了代理即自动打通**;
+    没开代理则抛异常 → 上游优雅降级(选股池不带细分行业,天梯面板照常)。
+
+    结果按日文件缓存(行业归属变动慢)。
+    """
+    key = date_key or _today_key()
+    cache_file = _CACHE_DIR / f"industry_em_{key}.pkl"
+    if cache_file.exists():
+        import pickle
+        return pickle.loads(cache_file.read_bytes())
+
+    import akshare as ak
+    boards = ak.stock_board_industry_name_em()   # 全部细分行业(若被阻断会在此抛异常)
+    mapping: dict[str, str] = {}
+    for name in boards["板块名称"]:
+        try:
+            cons = ak.stock_board_industry_cons_em(symbol=name)
+            for code in cons["代码"].astype(str):
+                mapping.setdefault(code.zfill(6), name)
+        except Exception:  # noqa: BLE001
+            continue
+    if mapping:
+        import pickle
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file.write_bytes(pickle.dumps(mapping))
+    return mapping
+
+
 # 全市场代码表缓存(当日)
 _codes_cache: tuple[str, pd.DataFrame] | None = None
 

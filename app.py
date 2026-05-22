@@ -169,6 +169,40 @@ def api_positions():
     })
 
 
+@app.route("/api/ladder")
+def api_ladder():
+    """连板天梯 + 今日热门板块(市场情绪,走 push2ex 直连可达)。"""
+    cfg = load_config()
+    source = ds.DataSource(prefer=cfg["runtime"].get("prefer_source", "tencent"))
+    try:
+        pool = ds.limit_up_pool()
+        hot = ds.hot_sectors(top=10)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(e)[:120]})
+
+    # 按连板高度分组(天梯)
+    ladder = {}
+    for _, r in pool.iterrows():
+        lb = int(r["lianban"])
+        ladder.setdefault(lb, []).append({
+            "code": r["code"], "name": r["name"], "sector": r.get("sector", ""),
+            "broken": int(r.get("broken", 0) or 0),
+        })
+    ladder_list = [{"lianban": k, "stocks": v} for k, v in sorted(ladder.items(), reverse=True)]
+
+    hot_list = [{
+        "sector": r["sector"], "max_lianban": int(r["max_lianban"]),
+        "zt_count": int(r["zt_count"]), "leader_name": r["leader_name"],
+    } for _, r in hot.iterrows()]
+
+    return jsonify({
+        "ok": True,
+        "total": int(len(pool)),
+        "ladder": ladder_list,
+        "hot_sectors": hot_list,
+    })
+
+
 @app.route("/api/evolve/status")
 def api_evolve_status():
     """进化看板:当前权重版本 / 样本数 / IC / 历次调整。"""
