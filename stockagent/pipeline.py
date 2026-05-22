@@ -40,6 +40,11 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
     wl = list({*(str(c) for c in cfg.get("watchlist", []) or []), *state.watchlist})
     cfg = {**cfg, "watchlist": wl}
 
+    # 排除板块:state 覆盖 config(None 表示沿用 config 默认)
+    if state.exclude_boards is not None:
+        cfg = {**cfg, "fundamental": {**cfg["fundamental"],
+                                      "exclude_boards": state.exclude_boards}}
+
     rt = cfg["runtime"]
     full_market = rt.get("full_market", False)
 

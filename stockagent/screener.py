@@ -15,6 +15,21 @@ import pandas as pd
 
 from . import datasource as ds
 
+# 板块识别(按代码前缀)
+BOARD_LABELS = {"chinext": "创业板", "star": "科创板", "bse": "北交所", "main": "主板"}
+
+
+def board_of(code: str) -> str:
+    """按代码前缀判断板块:chinext/star/bse/main。"""
+    code = str(code)
+    if code.startswith("30"):
+        return "chinext"        # 创业板,20% 涨跌停
+    if code.startswith("688"):
+        return "star"           # 科创板,20% 涨跌停
+    if code.startswith(("4", "8", "92")):
+        return "bse"            # 北交所,30% 涨跌停(83/87/88/920 等)
+    return "main"               # 主板(沪 60 / 深 000,001,002,003)
+
 
 def apply_filters(spot: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     """返回 (通过的, 被剔除的带原因)。"""
@@ -32,6 +47,13 @@ def apply_filters(spot: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, pd.DataF
     if f.get("exclude_st", True):
         st_mask = df[ds.COL_NAME].astype(str).str.contains("ST", case=False, na=False)
         mark(st_mask, "ST/*ST")
+
+    # 板块过滤:排除高波动板块(创业板/科创板/北交所)
+    exclude_boards = f.get("exclude_boards", []) or []
+    if exclude_boards:
+        board_series = df[ds.COL_CODE].astype(str).map(board_of)
+        for b in exclude_boards:
+            mark(board_series == b, f"排除{BOARD_LABELS.get(b, b)}")
 
     if f.get("exclude_loss", True) and ds.COL_PE in df.columns:
         mark(df[ds.COL_PE] < 0, "亏损(PE<0)")

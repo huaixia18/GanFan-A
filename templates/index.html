@@ -98,6 +98,16 @@
       </form>
     </div>
     <div class="card tool">
+      <div class="k" style="color:var(--mut);font-size:12px">排除板块(勾选=不进选股,主板始终保留)</div>
+      <form method="post" action="/boards" style="margin-top:8px">
+        {% set eb = exclude_boards|default([]) %}
+        <label class="note" style="margin-right:12px"><input type="checkbox" name="exclude" value="chinext" {{ 'checked' if 'chinext' in eb }}> 创业板(30)</label>
+        <label class="note" style="margin-right:12px"><input type="checkbox" name="exclude" value="star" {{ 'checked' if 'star' in eb }}> 科创板(688)</label>
+        <label class="note" style="margin-right:12px"><input type="checkbox" name="exclude" value="bse" {{ 'checked' if 'bse' in eb }}> 北交所(8/4/92)</label>
+        <button style="margin-top:8px">应用</button>
+      </form>
+    </div>
+    <div class="card tool">
       <div class="k" style="color:var(--mut);font-size:12px">分时卖出自测(粘贴分时价,空格/逗号分隔)</div>
       <form method="post" action="/sell-check" style="margin-top:8px">
         <input type="text" name="prices" placeholder="10.0 10.3 10.1 10.05" style="width:60%">

@@ -8,6 +8,9 @@ fundamental:
   price_max: 30.0           # 股价上限,元
   exclude_st: true          # 排除 ST/*ST
   exclude_new_days: 60      # 排除上市不足 N 天的次新(无趋势可言)
+  # 排除板块(高波动/高风险):可填 chinext(创业板30) / star(科创板688) / bse(北交所8/4/920)
+  # 留空 [] 表示不限板块。默认排除三个高波动板块,只做主板。
+  exclude_boards: ["chinext", "star", "bse"]
 
 # 二、自选池:只交易池里的股票。为空表示对全市场筛选结果开放
 watchlist: []

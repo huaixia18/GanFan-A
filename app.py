@@ -33,8 +33,11 @@ def index():
     cfg = load_config()
     result = run(cfg)
     state = RiskState.load(STATE_PATH)
+    # 当前生效的排除板块:state 覆盖优先,否则 config 默认
+    eff_boards = (state.exclude_boards if state.exclude_boards is not None
+                  else cfg["fundamental"].get("exclude_boards", []))
     return render_template("index.html", r=result, cfg=cfg,
-                           positions=state.positions)
+                           positions=state.positions, exclude_boards=eff_boards)
 
 
 @app.route("/run", methods=["POST"])
@@ -67,6 +70,17 @@ def watchlist():
         elif action == "remove" and code in state.watchlist:
             state.watchlist.remove(code)
         state.save(STATE_PATH)
+    return redirect(url_for("index"))
+
+
+@app.route("/boards", methods=["POST"])
+def boards():
+    """设置排除板块。表单提交勾选的板块代码(chinext/star/bse),未勾的即不排除。"""
+    state = RiskState.load(STATE_PATH)
+    valid = {"chinext", "star", "bse"}
+    selected = [b for b in request.form.getlist("exclude") if b in valid]
+    state.exclude_boards = selected  # 即使空列表也存(表示用户明确不排除)
+    state.save(STATE_PATH)
     return redirect(url_for("index"))
 
 
