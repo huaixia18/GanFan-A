@@ -28,6 +28,8 @@ class RiskState:
     equity_history: list[dict] = field(default_factory=list)
     # 排除板块覆盖(None=用 config 默认;列表=运行时覆盖,[] 表示不排除任何板块)
     exclude_boards: list[str] | None = None
+    # 只做活跃板块(连板天梯热度Top N)覆盖(None=用 config 默认)
+    active_sector_only: bool | None = None
 
     @classmethod
     def load(cls, path: Path) -> "RiskState":
@@ -41,6 +43,7 @@ class RiskState:
                 positions=data.get("positions", []),
                 equity_history=data.get("equity_history", []),
                 exclude_boards=data.get("exclude_boards"),
+                active_sector_only=data.get("active_sector_only"),
             )
         return cls()
 

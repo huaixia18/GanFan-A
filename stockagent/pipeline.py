@@ -40,10 +40,14 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
     wl = list({*(str(c) for c in cfg.get("watchlist", []) or []), *state.watchlist})
     cfg = {**cfg, "watchlist": wl}
 
-    # 排除板块:state 覆盖 config(None 表示沿用 config 默认)
+    # 排除板块 / 活跃板块开关:state 覆盖 config(None 表示沿用 config 默认)
+    _fund_override = {}
     if state.exclude_boards is not None:
-        cfg = {**cfg, "fundamental": {**cfg["fundamental"],
-                                      "exclude_boards": state.exclude_boards}}
+        _fund_override["exclude_boards"] = state.exclude_boards
+    if state.active_sector_only is not None:
+        _fund_override["active_sector_only"] = state.active_sector_only
+    if _fund_override:
+        cfg = {**cfg, "fundamental": {**cfg["fundamental"], **_fund_override}}
 
     rt = cfg["runtime"]
     full_market = rt.get("full_market", False)
@@ -64,21 +68,14 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
     spot = source.spot()
     universe_count = len(spot)
 
-    passed, dropped = screener.apply_filters(spot, cfg)
-
-    # 全市场模式:基本面筛后按活跃度(涨幅+量比)粗筛到 prefilter_top,只对其算趋势(控速)
-    if full_market and not passed.empty:
-        prefilter_top = rt.get("prefilter_top", 200)
-        activity = passed[ds.COL_PCT] + 2.0 * passed[ds.COL_VOL_RATIO].clip(lower=0)
-        passed = passed.assign(_act=activity).sort_values(
-            "_act", ascending=False).head(prefilter_top).drop(columns="_act").reset_index(drop=True)
-
-    # 板块归属:优先用东财细分行业(与连板天梯同口径,需代理可达),
-    # 失败则降级到交易所粗行业 / universe 注释。
+    # 先算板块映射 + 连板天梯(筛选要用):
+    # 板块归属优先用东财细分行业(与天梯同口径,需代理可达),失败则降级。
     sector_map = None
+    sector_map_is_em = False   # 是否与连板天梯同口径(东财细分行业)
     if source.is_real:
         try:
             sector_map = ds.industry_map_em()    # 代理可达时返回全市场细分行业
+            sector_map_is_em = bool(sector_map)
         except Exception:  # noqa: BLE001
             sector_map = None
     if not sector_map:
@@ -86,17 +83,38 @@ def run(cfg: dict | None = None, state: RiskState | None = None) -> PipelineResu
             sector_map = source.industry_map
         elif source.mode == "tencent":
             sector_map = sector_map_file
-        elif source.mode == "eastmoney":
-            sector_map = leaders.build_sector_map(passed[ds.COL_CODE].astype(str).tolist())
-    annotated = leaders.annotate_leaders(passed, sector_map)
+        # 东财源在线板块接口很慢,放到筛后再补(见下),这里先留空
 
-    # 连板天梯:用今日涨停池算活跃板块,给选股池里属于热门板块的股票打热度
+    # 连板天梯:今日涨停池 → 活跃板块(热度 Top N)
     hot = None
     if source.is_real:
         try:
             hot = ds.hot_sectors(top=rt.get("hot_sectors_top", 12))
         except Exception:  # noqa: BLE001
             hot = None
+    # 活跃板块名集合(供 screener 硬筛):取热度前 hot_top_n 个
+    # 仅当板块映射与天梯同口径(东财细分行业,需代理)时才硬筛,否则会筛空
+    active_sectors = None
+    f = cfg["fundamental"]
+    if (f.get("active_sector_only") and sector_map_is_em
+            and hot is not None and not hot.empty):
+        active_sectors = set(hot.head(f.get("hot_top_n", 8))["sector"].tolist())
+
+    passed, dropped = screener.apply_filters(
+        spot, cfg, sector_map=sector_map, active_sectors=active_sectors)
+
+    # 全市场模式:基本面+板块筛后按活跃度粗筛到 prefilter_top,只对其算趋势(控速)
+    if full_market and not passed.empty:
+        prefilter_top = rt.get("prefilter_top", 200)
+        activity = passed[ds.COL_PCT] + 2.0 * passed[ds.COL_VOL_RATIO].clip(lower=0)
+        passed = passed.assign(_act=activity).sort_values(
+            "_act", ascending=False).head(prefilter_top).drop(columns="_act").reset_index(drop=True)
+
+    # 东财源:在线板块接口慢,筛后只对入选股补板块
+    if sector_map is None and source.mode == "eastmoney" and not passed.empty:
+        sector_map = leaders.build_sector_map(passed[ds.COL_CODE].astype(str).tolist())
+
+    annotated = leaders.annotate_leaders(passed, sector_map)
     annotated = leaders.annotate_hot(annotated, hot)
 
     # 进化:用当前激活的权重版本覆盖 config 死值(无历史则用 config)

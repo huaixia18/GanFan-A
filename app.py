@@ -33,11 +33,14 @@ def index():
     cfg = load_config()
     result = run(cfg)
     state = RiskState.load(STATE_PATH)
-    # 当前生效的排除板块:state 覆盖优先,否则 config 默认
+    # 当前生效的排除板块 / 活跃板块开关:state 覆盖优先,否则 config 默认
     eff_boards = (state.exclude_boards if state.exclude_boards is not None
                   else cfg["fundamental"].get("exclude_boards", []))
+    eff_active = (state.active_sector_only if state.active_sector_only is not None
+                  else cfg["fundamental"].get("active_sector_only", False))
     return render_template("index.html", r=result, cfg=cfg,
-                           positions=state.positions, exclude_boards=eff_boards)
+                           positions=state.positions, exclude_boards=eff_boards,
+                           active_sector_only=eff_active)
 
 
 @app.route("/run", methods=["POST"])
@@ -80,6 +83,8 @@ def boards():
     valid = {"chinext", "star", "bse"}
     selected = [b for b in request.form.getlist("exclude") if b in valid]
     state.exclude_boards = selected  # 即使空列表也存(表示用户明确不排除)
+    # 只做活跃板块开关(复选框勾选=开启)
+    state.active_sector_only = request.form.get("active_sector") == "on"
     state.save(STATE_PATH)
     return redirect(url_for("index"))
 

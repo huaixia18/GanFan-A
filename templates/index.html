@@ -104,6 +104,9 @@
         <label class="note" style="margin-right:12px"><input type="checkbox" name="exclude" value="chinext" {{ 'checked' if 'chinext' in eb }}> 创业板(30)</label>
         <label class="note" style="margin-right:12px"><input type="checkbox" name="exclude" value="star" {{ 'checked' if 'star' in eb }}> 科创板(688)</label>
         <label class="note" style="margin-right:12px"><input type="checkbox" name="exclude" value="bse" {{ 'checked' if 'bse' in eb }}> 北交所(8/4/92)</label>
+        <div style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px">
+          <label class="note"><input type="checkbox" name="active_sector" {{ 'checked' if active_sector_only|default(false) }}> 只做活跃板块(连板天梯热门 Top N,需开代理对齐行业)</label>
+        </div>
         <button style="margin-top:8px">应用</button>
       </form>
     </div>

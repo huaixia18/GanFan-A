@@ -31,8 +31,14 @@ def board_of(code: str) -> str:
     return "main"               # 主板(沪 60 / 深 000,001,002,003)
 
 
-def apply_filters(spot: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """返回 (通过的, 被剔除的带原因)。"""
+def apply_filters(spot: pd.DataFrame, cfg: dict,
+                  sector_map: dict | None = None,
+                  active_sectors: set | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """返回 (通过的, 被剔除的带原因)。
+
+    active_sectors 非空时启用「活跃板块硬筛」:只保留所属细分行业在该集合里的股票。
+    需要 sector_map(代码→细分行业)。两者任一缺失则跳过此筛(降级,不硬筛)。
+    """
     f = cfg["fundamental"]
     watchlist = [str(c) for c in cfg.get("watchlist", []) or []]
 
@@ -54,6 +60,12 @@ def apply_filters(spot: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, pd.DataF
         board_series = df[ds.COL_CODE].astype(str).map(board_of)
         for b in exclude_boards:
             mark(board_series == b, f"排除{BOARD_LABELS.get(b, b)}")
+
+    # 活跃板块硬筛:只保留所属细分行业在今日热度 Top N 里的股票(跟踪活跃板块的纪律)
+    # 需 sector_map + active_sectors;缺任一则不硬筛(降级)。
+    if active_sectors and sector_map:
+        sec = df[ds.COL_CODE].astype(str).map(lambda c: sector_map.get(c.zfill(6)))
+        mark(~sec.isin(active_sectors), "非活跃板块")
 
     if f.get("exclude_loss", True) and ds.COL_PE in df.columns:
         mark(df[ds.COL_PE] < 0, "亏损(PE<0)")
