@@ -281,6 +281,15 @@ def hot_sectors(date_str: str | None = None, top: int = 10) -> pd.DataFrame:
     pool = limit_up_pool(date_str)
     if pool.empty:
         return pool
+    pool = pool.copy()
+    # 用 datacenter 全市场行业映射给涨停股重标行业,与选股池同口径(关键!)。
+    # 取不到映射时退回涨停池自带行业(口径可能与选股池不同,硬筛会跳过)。
+    try:
+        imap = industry_map_em()
+        mapped = pool["code"].map(lambda c: imap.get(str(c).zfill(6)))
+        pool["sector"] = mapped.fillna(pool["sector"])
+    except Exception:  # noqa: BLE001
+        pass
     g = pool.groupby("sector").agg(
         max_lianban=("lianban", "max"),
         zt_count=("code", "count"),
@@ -294,12 +303,13 @@ def hot_sectors(date_str: str | None = None, top: int = 10) -> pd.DataFrame:
 
 
 def industry_map_em(date_key: str | None = None) -> dict[str, str]:
-    """全市场 代码→东财细分行业 映射,与连板天梯(涨停池)同口径。
+    """全市场 代码→东财行业(末级)映射。
 
-    走 akshare 的东财行业成分接口(push2 域名,直连被阻断)。
-    akshare 默认读环境变量 HTTP_PROXY,所以**用户开了代理即自动打通**;
-    没开代理则抛异常 → 上游优雅降级(选股池不带细分行业,天梯面板照常)。
+    走东财数据中心 datacenter.eastmoney.com(RPT_F10_BASIC_ORGINFO 的 EM2016),
+    **直连可达、无需代理**(区别于被阻断的 push2 行业接口)。
+    EM2016 形如「食品饮料-饮料-白酒」,取末级「白酒」。
 
+    连板天梯(hot_sectors)用同一份映射给涨停股重标行业,两边口径天然统一。
     结果按日文件缓存(行业归属变动慢)。
     """
     key = date_key or _today_key()
@@ -308,20 +318,30 @@ def industry_map_em(date_key: str | None = None) -> dict[str, str]:
         import pickle
         return pickle.loads(cache_file.read_bytes())
 
-    import akshare as ak
-    boards = ak.stock_board_industry_name_em()   # 全部细分行业(若被阻断会在此抛异常)
+    sess = _no_proxy_session()   # 直连,绕开残留/不稳的代理
+    url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
     mapping: dict[str, str] = {}
-    for name in boards["板块名称"]:
+    for pg in range(1, 16):      # 分页拉全市场(~5500 只,500/页)
         try:
-            cons = ak.stock_board_industry_cons_em(symbol=name)
-            for code in cons["代码"].astype(str):
-                mapping.setdefault(code.zfill(6), name)
+            r = sess.get(url, params={
+                "reportName": "RPT_F10_BASIC_ORGINFO",
+                "columns": "SECURITY_CODE,EM2016",
+                "pageSize": 500, "pageNumber": pg,
+            }, timeout=10)
+            data = (r.json().get("result") or {}).get("data") or []
         except Exception:  # noqa: BLE001
-            continue
-    if mapping:
-        import pickle
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_file.write_bytes(pickle.dumps(mapping))
+            break
+        for d in data:
+            em = d.get("EM2016")
+            if em:
+                mapping[str(d["SECURITY_CODE"]).zfill(6)] = em.split("-")[-1]
+        if len(data) < 500:
+            break
+    if not mapping:
+        raise DataUnavailable("datacenter 行业映射为空")
+    import pickle
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file.write_bytes(pickle.dumps(mapping))
     return mapping
 
 
