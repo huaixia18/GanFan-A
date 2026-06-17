@@ -4,8 +4,6 @@
   POST /run           重新跑一次流程
   POST /drawdown      登记当日回撤(触发 -4.5% 强制休息)
   POST /watchlist     增删自选池
-  POST /sell-check    分时卖出信号自测(粘贴分时价序列)
-  GET  /api/intraday  盘中监控:自选池每只的实时分时 + 卖出信号(JSON,前端轮询)
 """
 from __future__ import annotations
 
@@ -17,7 +15,6 @@ from stockagent import datasource as ds
 from stockagent import positions as pos
 from stockagent.pipeline import STATE_PATH, load_config, run
 from stockagent.risk import RiskState
-from stockagent.signals import intraday_sell_signal
 
 app = Flask(__name__)
 
@@ -97,20 +94,6 @@ def reset_rest():
     return redirect(url_for("index"))
 
 
-@app.route("/sell-check", methods=["POST"])
-def sell_check():
-    raw = request.form.get("prices", "")
-    try:
-        prices = [float(x) for x in raw.replace(",", " ").split() if x.strip()]
-    except ValueError:
-        prices = []
-    triggered, msg = intraday_sell_signal(prices) if len(prices) >= 4 else (False, "请至少输入4个价格")
-    cfg = load_config()
-    result = run(cfg)
-    return render_template("index.html", r=result, cfg=cfg,
-                           sell_result={"triggered": triggered, "msg": msg, "prices": raw})
-
-
 @app.route("/position", methods=["POST"])
 def position():
     state = RiskState.load(STATE_PATH)
@@ -141,7 +124,7 @@ def api_positions():
                         "time": datetime.now().strftime("%H:%M:%S")})
 
     source = ds.DataSource(prefer=cfg["runtime"].get("prefer_source", "tencent"))
-    pv = pos.analyze(state.positions, source, cfg, with_intraday=True)
+    pv = pos.analyze(state.positions, source, cfg)
 
     # 账户当日总回撤达阈值 → 自动登记并触发强制休息(铁律联动)
     auto_rested = False
@@ -237,40 +220,6 @@ def api_equity():
     """账户每日净值快照历史(复盘曲线)。"""
     state = RiskState.load(STATE_PATH)
     return jsonify({"history": state.equity_history})
-
-
-@app.route("/api/intraday")
-def api_intraday():
-    """盘中监控:对自选池每只取实时分时,跑卖出规则。前端定时轮询。"""
-    cfg = load_config()
-    codes = _watchlist_codes(cfg)
-    source = ds.DataSource(prefer=cfg["runtime"].get("prefer_source", "tencent"))
-    source.spot()  # 锁定真实源后端(决定 minute_prices 是否可用)
-
-    items = []
-    for code in codes:
-        prices = source.minute_prices(code)
-        if not prices:
-            items.append({"code": code, "ok": False, "msg": "无分时数据(休市/数据源不可用)"})
-            continue
-        triggered, msg = intraday_sell_signal(prices)
-        last = prices[-1]
-        first = prices[0]
-        items.append({
-            "code": code,
-            "ok": True,
-            "last": round(last, 2),
-            "pct_from_open": round((last - first) / first * 100, 2) if first else 0,
-            "points": len(prices),
-            "triggered": triggered,
-            "msg": msg,
-        })
-    return jsonify({
-        "mode": source.mode,
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "watchlist_size": len(codes),
-        "items": items,
-    })
 
 
 if __name__ == "__main__":

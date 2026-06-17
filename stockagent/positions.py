@@ -1,9 +1,9 @@
-"""持仓分析 —— 浮盈亏 / 当日损益 / 止损 / 加仓提示 / 风控联动。
+"""持仓分析 —— 浮盈亏 / 当日损益 / 趋势止损 / 加仓提示 / 风控联动。
 
 严格遵守纪律:
   - **不补仓**:持仓下跌/亏损时绝不提示加仓,只提醒"纪律:不补仓"。
   - 加仓提示**只在上升趋势 + 有量承接**时给(顺势不逆,称"加仓"非"补仓")。
-  - 卖出/止损果断:分时急拉急跌或缓拉急跌 → 卖;趋势转坏(跌破均线)→ 止损。
+  - 趋势转坏(跌破均线)→ 止损提示。
   - 账户总浮盈亏汇总,当日总回撤达 -4.5% 联动强制休息。
 """
 from __future__ import annotations
@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 
 from . import datasource as ds
 from .scorer import compute_trend
-from .signals import intraday_sell_signal
 
 
 @dataclass
@@ -45,8 +44,7 @@ class PortfolioView:
     drawdown_alert: bool        # 当日总回撤是否达到 -4.5% 阈值
 
 
-def analyze(positions: list[dict], source: ds.DataSource, cfg: dict,
-            with_intraday: bool = True) -> PortfolioView:
+def analyze(positions: list[dict], source: ds.DataSource, cfg: dict) -> PortfolioView:
     if not positions:
         return PortfolioView([], 0, 0, 0, 0, 0, 0, False)
 
@@ -92,25 +90,16 @@ def analyze(positions: list[dict], source: ds.DataSource, cfg: dict,
         alerts: list[str] = []
         level = "ok"
 
-        # 1) 分时卖出信号(果断卖出)
-        if with_intraday:
-            mins = source.minute_prices(code)
-            if mins:
-                trig, msg = intraday_sell_signal(mins)
-                if trig:
-                    alerts.append(f"卖出:{msg}")
-                    level = "warn"
-
-        # 2) 趋势转坏止损:跌破 20 日均线 / 趋势不再向上
+        # 趋势转坏止损:跌破 20 日均线 / 趋势不再向上
         if not tm.uptrend or not tm.above_ma20:
             alerts.append("趋势转坏(跌破均线/上升趋势破坏)→ 考虑止损")
             level = "warn"
 
-        # 3) 浮亏提醒 + 不补仓纪律
+        # 浮亏提醒 + 不补仓纪律
         if pnl_pct < 0:
             alerts.append(f"浮亏 {pnl_pct:.1f}% · 纪律:不补仓")
 
-        # 4) 加仓提示:仅上升趋势 + 有量承接 + 当前未触发卖出/止损
+        # 加仓提示:仅上升趋势 + 有量承接 + 当前未触发止损
         vr = float(row.get(ds.COL_VOL_RATIO, 0) or 0)
         min_vr = cfg["buy_signal"].get("min_volume_ratio", 1.0)
         if level == "ok" and tm.uptrend and tm.above_ma20 and vr >= min_vr and pnl_pct >= 0:

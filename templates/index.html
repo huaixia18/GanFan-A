@@ -59,12 +59,6 @@
   </div>
   {% endif %}
 
-  {% if sell_result %}
-  <div class="alert {{ 'ok' if not sell_result.triggered else '' }}">
-    分时卖出自测({{ sell_result.prices }}):{{ sell_result.msg }}
-  </div>
-  {% endif %}
-
   <!-- 状态条 -->
   <div class="bar">
     <div class="card stat">
@@ -110,13 +104,6 @@
         <button style="margin-top:8px">应用</button>
       </form>
     </div>
-    <div class="card tool">
-      <div class="k" style="color:var(--mut);font-size:12px">分时卖出自测(粘贴分时价,空格/逗号分隔)</div>
-      <form method="post" action="/sell-check" style="margin-top:8px">
-        <input type="text" name="prices" placeholder="10.0 10.3 10.1 10.05" style="width:60%">
-        <button>检测</button>
-      </form>
-    </div>
     <div class="card tool" style="min-width:380px">
       <div class="k" style="color:var(--mut);font-size:12px">录入持仓(同代码再录会按加权成本合并)</div>
       <form method="post" action="/position" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
@@ -129,29 +116,11 @@
     </div>
   </div>
 
-  <!-- 盘中监控 -->
-  <div class="card" style="margin-bottom:18px">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
-      <b>盘中监控</b>
-      <span class="note">自选池实时分时,自动跑卖出规则(急拉急跌1分钟 / 缓拉急跌2次失败)</span>
-      <label class="note" style="margin-left:auto;display:flex;align-items:center;gap:6px">
-        <input type="checkbox" id="mon-toggle"> 开启轮询
-      </label>
-      <select id="mon-interval" style="background:#0d0f14;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:5px 8px">
-        <option value="10">10秒</option>
-        <option value="30" selected>30秒</option>
-        <option value="60">60秒</option>
-      </select>
-      <span class="note" id="mon-status">未开启</span>
-    </div>
-    <div id="mon-body"><span class="note">勾选「开启轮询」后,每隔所选间隔刷新自选池分时并检测卖出信号。仅交易时段有分时数据。</span></div>
-  </div>
-
   <!-- 持仓监控 -->
   <div class="card" style="margin-bottom:18px">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
       <b>持仓监控</b>
-      <span class="note">浮盈亏 · 当日损益 · 分时卖出 · 趋势止损 · 顺势加仓(下跌不补仓)</span>
+      <span class="note">浮盈亏 · 当日损益 · 趋势止损 · 顺势加仓(下跌不补仓)</span>
       <span id="pos-account" class="note" style="margin-left:auto"></span>
       <label class="note" style="display:flex;align-items:center;gap:6px">
         <input type="checkbox" id="pos-toggle"> 开启监控
@@ -249,66 +218,6 @@
 </div>
 
 <script>
-(function(){
-  const toggle = document.getElementById('mon-toggle');
-  const intervalSel = document.getElementById('mon-interval');
-  const statusEl = document.getElementById('mon-status');
-  const bodyEl = document.getElementById('mon-body');
-  let timer = null;
-
-  function render(data){
-    if(!data.items || !data.items.length){
-      bodyEl.innerHTML = '<span class="note">自选池为空,先在上方「自选池」加入要监控的代码。</span>';
-      return;
-    }
-    let html = '<table><thead><tr><th style="text-align:left">代码</th><th>最新价</th><th>较开盘</th><th>分钟点</th><th style="text-align:left">卖出信号</th></tr></thead><tbody>';
-    for(const it of data.items){
-      if(!it.ok){
-        html += `<tr><td style="text-align:left">${it.code}</td><td colspan="4" class="note" style="text-align:left">${it.msg}</td></tr>`;
-        continue;
-      }
-      const pcls = it.pct_from_open>=0?'up':'down';
-      const sell = it.triggered
-        ? `<span style="color:#ff8a8a;font-weight:700">⚠ ${it.msg}</span>`
-        : `<span class="down">${it.msg}</span>`;
-      html += `<tr ${it.triggered?'style="background:#3a1f1f"':''}>
-        <td style="text-align:left"><b>${it.code}</b></td>
-        <td>${it.last}</td>
-        <td class="${pcls}">${it.pct_from_open>=0?'+':''}${it.pct_from_open}%</td>
-        <td>${it.points}</td>
-        <td style="text-align:left">${sell}</td></tr>`;
-    }
-    html += '</tbody></table>';
-    bodyEl.innerHTML = html;
-  }
-
-  async function poll(){
-    statusEl.textContent = '刷新中...';
-    try{
-      const resp = await fetch('/api/intraday');
-      const data = await resp.json();
-      render(data);
-      const anyTrig = (data.items||[]).some(x=>x.triggered);
-      statusEl.textContent = `${data.time} · ${data.mode} · ${data.watchlist_size}只` + (anyTrig?' · ⚠有卖出信号':'');
-      statusEl.style.color = anyTrig ? '#ff8a8a' : '';
-      if(anyTrig && window.Notification && Notification.permission==='granted'){
-        new Notification('选股Agent · 触发卖出信号', {body: data.items.filter(x=>x.triggered).map(x=>x.code).join(', ')});
-      }
-    }catch(e){ statusEl.textContent = '请求失败: '+e; }
-  }
-
-  function start(){
-    if(window.Notification && Notification.permission==='default') Notification.requestPermission();
-    poll();
-    timer = setInterval(poll, parseInt(intervalSel.value,10)*1000);
-    statusEl.textContent = '已开启';
-  }
-  function stop(){ if(timer){clearInterval(timer);timer=null;} statusEl.textContent='已停止'; }
-
-  toggle.addEventListener('change', ()=> toggle.checked ? start() : stop());
-  intervalSel.addEventListener('change', ()=>{ if(toggle.checked){stop();start();} });
-})();
-
 // ===== 持仓监控 =====
 (function(){
   const toggle = document.getElementById('pos-toggle');

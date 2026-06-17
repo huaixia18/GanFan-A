@@ -210,24 +210,6 @@ def _tx_daily(code: str, days: int) -> pd.DataFrame:
     return out
 
 
-def _tx_minute(code: str) -> list[float]:
-    """当日分时价序列(逐分钟收盘价),供盘中卖出规则判定。"""
-    sess = _no_proxy_session()
-    sym = _tx_prefix(code)
-    url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={sym}"
-    resp = sess.get(url, timeout=8, allow_redirects=True)
-    mins = resp.json()["data"][sym]["data"]["data"]
-    prices = []
-    for row in mins:
-        parts = row.split()
-        if len(parts) >= 2:
-            try:
-                prices.append(float(parts[1]))
-            except ValueError:
-                continue
-    return prices
-
-
 # --------------------------------------------------------------------------- #
 # 连板天梯 / 涨停池(市场情绪 → 活跃板块)
 # 走 akshare 的 push2ex.eastmoney.com,经实测在本机可达(区别于被阻断的 push2)
@@ -479,15 +461,6 @@ class DataSource:
                 errors.append(f"{backend}: {type(e).__name__} {str(e)[:80]}")
 
         raise DataUnavailable("所有真实源失败 -> " + " | ".join(errors))
-
-    def minute_prices(self, code: str) -> list[float]:
-        """当日分时价序列(腾讯)。取不到返回空。"""
-        if self._backend is None:
-            return []
-        try:
-            return _tx_minute(code)
-        except Exception:  # noqa: BLE001
-            return []
 
     # ---- daily ---- #
     def daily(self, code: str, days: int = 60) -> pd.DataFrame:
